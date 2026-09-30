@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cấu trúc protein bậc 1 – bậc 4 (3D)</title>
+<style>
+:root{--bg:#f4f6fb;--fg:#1c2333;--card:#ffffffee;--bd:#d5dbe8;--ac:#2f6df6}
+@media (prefers-color-scheme:dark){:root{--bg:#10141f;--fg:#e8ecf6;--card:#1a2032ee;--bd:#2c3652;--ac:#6b9bff}}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+header{padding:10px 14px 6px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+h1{font-size:17px;margin:0}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+button{font:inherit;font-size:14px;padding:7px 12px;border-radius:9px;border:1px solid var(--bd);background:var(--card);color:var(--fg);cursor:pointer}
+button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+#stage{position:relative;flex:1;min-height:0}
+canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+.box{position:absolute;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 12px;font-size:14px;line-height:1.45}
+#info{left:10px;right:10px;bottom:10px;max-width:760px}
+#info b{color:var(--ac)}
+#leg{top:10px;right:10px;font-size:13px}
+#leg div{display:flex;align-items:center;gap:7px;margin:2px 0}
+#leg i{width:14px;height:14px;border-radius:50%;display:inline-block}
+#tools{top:10px;left:10px;display:flex;gap:6px;flex-direction:column;background:none;border:0;padding:0}
+#sub{display:none;gap:6px}
+</style></head><body>
+<header><h1>🧬 Các bậc cấu trúc của protein</h1>
+<div class="tabs" id="tabs"></div></header>
+<div id="stage"><canvas id="c"></canvas>
+<div class="box" id="tools"><button id="rot" class="on">⟳ Tự xoay</button><button id="fs">⛶ Toàn màn hình</button>
+<div id="sub"><button data-m="0" class="on">Chuỗi aa</button><button data-m="1">Nguyên tử</button></div></div>
+<div class="box" id="leg"></div>
+<div class="box" id="info"></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const T=THREE,cv=document.getElementById('c');
+const ren=new T.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
+ren.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene=new T.Scene(),cam=new T.PerspectiveCamera(45,1,.1,500);cam.position.z=42;
+scene.add(new T.AmbientLight(0xffffff,.75));
+const dl=new T.DirectionalLight(0xffffff,.8);dl.position.set(10,20,25);scene.add(dl);
+const root=new T.Group();scene.add(root);
+
+// Màu, bán kính, tên của từng nguyên tố
+const EL={C:[0x7a808c,.5,'Carbon (C)'],H:[0xf0f0f0,.3,'Hydro (H)'],O:[0xe5383b,.46,'Oxy (O)'],N:[0x2f6df6,.47,'Nitơ (N)'],S:[0xf5c518,.6,'Lưu huỳnh (S)'],R:[0x3dbb4a,.75,'Gốc R']};
+const sg=new T.SphereGeometry(1,22,16),V=(x,y,z)=>new T.Vector3(x,y,z);
+
+function atom(g,e,p){const m=new T.Mesh(sg,new T.MeshStandardMaterial({color:EL[e][0],roughness:.4}));m.scale.setScalar(EL[e][1]);m.position.copy(p);g.add(m);return p}
+function bond(g,a,b,r=.09,c=0xb8bdc8){const d=b.clone().sub(a),m=new T.Mesh(new T.CylinderGeometry(r,r,d.length(),8),new T.MeshStandardMaterial({color:c}));m.position.copy(a).add(b).multiplyScalar(.5);m.quaternion.setFromUnitVectors(V(0,1,0),d.normalize());g.add(m)}
+// Liên kết hydro (nét đứt xanh)
+function hb(g,a,b){const n=Math.max(3,Math.round(a.distanceTo(b)/.45));for(let i=1;i<n;i++){if(i%2)continue;const m=new T.Mesh(sg,new T.MeshBasicMaterial({color:0x38d6e8}));m.scale.setScalar(.09);m.position.lerpVectors(a,b,i/n);g.add(m)}}
+// Nhãn chữ 3D
+function label(g,t,p,w=9){const c=document.createElement('canvas');c.width=512;c.height=128;const x=c.getContext('2d');x.fillStyle='rgba(20,26,45,.82)';x.beginPath();x.roundRect?x.roundRect(6,20,500,88,30):x.rect(6,20,500,88);x.fill();x.fillStyle='#fff';x.font='bold 46px sans-serif';x.textAlign='center';x.textBaseline='middle';x.fillText(t,256,66);
+const s=new T.Sprite(new T.SpriteMaterial({map:new T.CanvasTexture(c),depthTest:false}));s.scale.set(w,w/4,1);s.position.copy(p);s.renderOrder=9;g.add(s)}
+function rng(s){return()=>(s=(s*16807)%2147483647)/2147483647}
+
+// Mạch chính zigzag (bậc 1 dạng nguyên tử và nếp gấp β)
+function strand(g,o){const n=o.n,dir=o.dir||1,len=n*3;const out=[];
+for(let j=0;j<len;j++){const t=['N','C','C'][j%3],r=Math.floor(j/3),k=dir>0?j:len-1-j,
+p=V(k*1.15-len*.575,(j%2)*.75,o.z);const sO=r%2?1:-1;
+atom(g,t,p);out.push({t,p,j,r,sO});}
+out.forEach((a,i)=>{if(i)bond(g,out[i-1].p,a.p);
+if(a.t=='N'){const h=atom(g,'H',a.p.clone().add(V(0,0,a.sO*1.15)));bond(g,a.p,h,.06);a.h=h}
+if(a.j%3==2){const oo=atom(g,'O',a.p.clone().add(V(0,(a.j%2?.5:-.5),a.sO*1.2)));bond(g,a.p,oo,.09,0xe58a8c);a.o=oo}
+if(a.j%3==1){const up=a.j%2?-1:1,rp=a.p.clone().add(V(0,up*1.5,0));
+if(o.cys===a.r){const c2=atom(g,'C',rp);bond(g,a.p,c2);const s=atom(g,'S',c2.clone().add(V(0,up*1.35,.3)));bond(g,c2,s,.1,0xf5d76e)}
+else{atom(g,'R',rp);bond(g,a.p,rp,.1,0x7fd48a)}}});
+return out}
+
+// Xoắn α dạng nguyên tử
+function helix(g,n){const A=[],P=(a,y,r)=>V(r*Math.cos(a),y,r*Math.sin(a));let prev;
+for(let i=0;i<n;i++){const a=i*1.745,y=i*1.5;
+const N=atom(g,'N',P(a-.5,y-.3,2.3)),C1=atom(g,'C',P(a,y,2.3)),C2=atom(g,'C',P(a+.5,y+.3,2.3));
+bond(g,N,C1);bond(g,C1,C2);if(prev)bond(g,prev,N);prev=C2;
+const H=atom(g,'H',P(a-.5,y-1.3,2.6));bond(g,N,H,.06);
+const O=atom(g,'O',P(a+.5,y+1.5,2.6));bond(g,C2,O,.09,0xe58a8c);
+const R=atom(g,'R',P(a,y,4));bond(g,C1,R,.1,0x7fd48a);A.push({H,O})}
+for(let i=0;i+4<n;i++)hb(g,A[i].O,A[i+4].H)}
+
+// Chuỗi cuộn gấp dạng ribbon (bậc 3, bậc 4). H = xoắn α, B = nếp β, L = vùng nối
+function fold(g,color,seed,kinds){const r=rng(seed);let p=V(0,0,0),d=V(1,0,0);const mids=[],col=new T.Color(color);
+const mat=(c)=>new T.MeshStandardMaterial({color:c,roughness:.45});
+(kinds||['H','L','B','L','H','L','B','L','H']).forEach(k=>{
+d=V(r()-.5,r()-.5,r()-.5).add(d.clone().multiplyScalar(.6)).normalize();
+const u=new T.Vector3().crossVectors(d,V(0,1,.3)).normalize(),v=new T.Vector3().crossVectors(d,u),pts=[];
+if(k=='H')for(let i=0;i<=28;i++){const a=i*.9;pts.push(p.clone().addScaledVector(d,i*.32).addScaledVector(u,Math.cos(a)*.8).addScaledVector(v,Math.sin(a)*.8))}
+else if(k=='B')for(let i=0;i<=5;i++)pts.push(p.clone().addScaledVector(d,i*.6));
+else{for(let i=0;i<=3;i++)pts.push(p.clone().addScaledVector(d,i*.5).add(V(r()-.5,r()-.5,r()-.5).multiplyScalar(i&&i<3?1.4:0)));mids.push(pts[1].clone())}
+g.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts),pts.length*4,k=='H'?.17:.14,8),mat(k=='L'?0x9aa0aa:col)));
+if(k=='B'){const e=pts[5],b=new T.Mesh(new T.BoxGeometry(.9,.16,3),mat(col.clone().offsetHSL(0,0,.12)));
+b.position.copy(pts[0]).add(e).multiplyScalar(.5);b.quaternion.setFromUnitVectors(V(0,0,1),d);g.add(b);
+const c=new T.Mesh(new T.ConeGeometry(.7,1,14),mat(col.clone().offsetHSL(0,0,.12)));c.position.copy(e).addScaledVector(d,.4);c.quaternion.setFromUnitVectors(V(0,1,0),d);g.add(c)}
+p=pts[pts.length-1].clone()});return mids}
+
+// Cầu disulfide S–S giữa hai vùng nối gần nhau nhất
+function ss(g,mids){let best=[0,1,1e9];for(let i=0;i<mids.length;i++)for(let j=i+2;j<mids.length;j++){const q=mids[i].distanceTo(mids[j]);if(q<best[2])best=[i,j,q]}
+const a=mids[best[0]],b=mids[best[1]];const s1=atom(g,'S',a),s2=atom(g,'S',b);bond(g,s1,s2,.16,0xf5d76e);return a.clone().add(b).multiplyScalar(.5)}
+
+// Nội dung giải thích cho từng bậc
+const INFO=[
+'<b>Bậc 1 – Trình tự amino acid.</b> Chuỗi polypeptide là các amino acid nối nhau bằng <b>liên kết peptide</b> (–CO–NH–). Trình tự (thứ tự, thành phần, số lượng) quyết định các bậc cấu trúc cao hơn.',
+'<b>Bậc 2 – Xoắn α và gấp nếp β.</b> Chuỗi polypeptide uốn thành xoắn α hoặc nếp gấp β, giữ ổn định nhờ <b>liên kết hydro</b> (nét đứt xanh) giữa nhóm C=O và N–H của các liên kết peptide.',
+'<b>Bậc 3 – Cuộn gấp không gian 3 chiều.</b> Xoắn α, nếp β và vùng nối cuộn lại thành một khối đặc thù; ổn định bởi cầu <b>disulfide (S–S)</b>, liên kết hydro, ion, tương tác kỵ nước.',
+'<b>Bậc 4 – Phức hợp nhiều chuỗi.</b> Nhiều chuỗi polypeptide (tiểu đơn vị, mỗi chuỗi một màu) liên kết với nhau tạo protein hoàn chỉnh, ví dụ hemoglobin có 4 chuỗi.'];
+const NAMES=['Bậc 1','Bậc 2','Bậc 3','Bậc 4'];
+let lv=0,mode=0,auto=true,zoom=42;
+
+function build(){root.clear();const h=new T.Group();root.add(h);
+if(lv==0){
+ if(mode==0){const N=20,pp=[];
+  for(let i=0;i<N;i++){const p=V(i*1.9,Math.sin(i*.6)*3,Math.cos(i*.45)*2);pp.push(p);
+   const m=new T.Mesh(sg,new T.MeshStandardMaterial({color:new T.Color().setHSL(i/N*.85,.6,.55),roughness:.35}));m.scale.setScalar(.85);m.position.copy(p);h.add(m)}
+  for(let i=1;i<N;i++)bond(h,pp[i-1],pp[i],.16,0xdde2ee);
+  label(h,'Amino acid',pp[3].clone().add(V(0,4.5,0)));
+  label(h,'Liên kết peptide',pp[11].clone().add(V(0,-5,0)),11);
+  label(h,'Đầu N',pp[0].clone().add(V(-2,3,0)),5);
+  label(h,'Đầu C',pp[N-1].clone().add(V(2,3,0)),5)}
+ else{const s=strand(h,{n:4,z:0,cys:1});
+  label(h,'Liên kết peptide (–CO–NH–)',s[5].p.clone().add(V(0,4,0)),12);
+  label(h,'Amino acid',s[1].p.clone().add(V(0,-3.5,0)),7)}}
+if(lv==1){
+ const a=new T.Group();a.position.set(-10,-11,0);h.add(a);helix(a,14);
+ label(h,'Xoắn α',V(-10,13,0),8);
+ const b=new T.Group();b.position.set(9,0,0);h.add(b);
+ [0,1,2].forEach(k=>strand(b,{n:4,z:(k-1)*4.9,dir:k%2?-1:1}));
+ label(h,'Gấp nếp β',V(9,5,0),8);
+ // liên kết hydro giữa các mạch của nếp β
+ const O=[],H=[];
+ b.children.forEach(m=>{if(m.geometry===sg&&m.material.color){const c=m.material.color.getHex();if(c==EL.O[0])O.push(m);if(c==EL.H[0])H.push(m)}});
+ O.forEach(o=>{let bd=1e9,bh;H.forEach(x=>{const d=o.position.distanceTo(x.position);if(Math.abs(o.position.z-x.position.z)>1.2&&d<bd){bd=d;bh=x}});if(bh&&bd<3.6)hb(b,o.position,bh.position)})}
+if(lv==2){const m=fold(h,0x2f8fe6,7);const c=ss(h,m);label(h,'Cầu disulfide (S–S)',c.clone().add(V(0,3,0)),10)}
+if(lv==3){const cols=[0x3dbb4a,0xf5c518,0x2f6df6,0xe5383b],off=[V(-7,4,0),V(7,4,0),V(-7,-5,0),V(7,-5,0)];
+ cols.forEach((c,i)=>{const s=new T.Group();fold(s,c,11+i*5);
+  const bx=new T.Box3().setFromObject(s),ct=bx.getCenter(V(0,0,0));
+  s.scale.setScalar(.6);s.position.copy(off[i]).addScaledVector(ct,-.6);h.add(s);
+  label(h,'Chuỗi '+(i+1),off[i].clone().add(V(0,5.2,0)),5)})}
+// căn giữa và co giãn vừa khung nhìn
+const bx=new T.Box3().setFromObject(h),ct=bx.getCenter(V(0,0,0)),sz=bx.getSize(V(0,0,0));
+const k=24/Math.max(sz.x,sz.y*1.3,sz.z);h.scale.setScalar(k);h.position.copy(ct).multiplyScalar(-k);
+root.rotation.set(.25,0,0);zoom=42;
+document.getElementById('info').innerHTML=INFO[lv];
+document.getElementById('sub').style.display=lv==0?'flex':'none';
+document.querySelectorAll('#tabs button').forEach((b,i)=>b.classList.toggle('on',i==lv))}
+
+// Giao diện
+const tb=document.getElementById('tabs');
+NAMES.forEach((n,i)=>{const b=document.createElement('button');b.textContent=n;b.onclick=()=>{lv=i;mode=0;build();sub()};tb.appendChild(b)});
+function sub(){document.querySelectorAll('#sub button').forEach(b=>b.classList.toggle('on',+b.dataset.m==mode))}
+document.querySelectorAll('#sub button').forEach(b=>b.onclick=()=>{mode=+b.dataset.m;build();sub()});
+document.getElementById('leg').innerHTML='<b>Nguyên tố</b>'+Object.values(EL).map(e=>`<div><i style="background:#${e[0].toString(16).padStart(6,'0')}"></i>${e[2]}</div>`).join('')+'<div><i style="background:#38d6e8;border-radius:2px;height:4px"></i>Liên kết hydro</div>';
+document.getElementById('rot').onclick=e=>{auto=!auto;e.target.classList.toggle('on',auto)};
+document.getElementById('fs').onclick=()=>{try{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()}catch(e){}};
+addEventListener('keydown',e=>{
+ if(e.key=='ArrowRight'&&lv<3){lv++;mode=0;build();sub()}
+ if(e.key=='ArrowLeft'&&lv>0){lv--;mode=0;build();sub()}});
+
+// Kéo chuột để xoay, lăn chuột để zoom
+let drag=null;
+cv.onpointerdown=e=>{drag=[e.clientX,e.clientY];cv.setPointerCapture(e.pointerId)};
+cv.onpointerup=()=>drag=null;
+cv.onpointermove=e=>{if(!drag)return;root.rotation.y+=(e.clientX-drag[0])*.01;root.rotation.x=Math.max(-1.4,Math.min(1.4,root.rotation.x+(e.clientY-drag[1])*.01));drag=[e.clientX,e.clientY]};
+cv.onwheel=e=>{e.preventDefault();zoom=Math.max(15,Math.min(90,zoom*(1+e.deltaY*.001)))};
+function rs(){const s=document.getElementById('stage');ren.setSize(s.clientWidth,s.clientHeight,false);cam.aspect=s.clientWidth/s.clientHeight;cam.updateProjectionMatrix()}
+addEventListener('resize',rs);
+(function loop(){requestAnimationFrame(loop);if(auto&&!drag)root.rotation.y+=.004;cam.position.z+=(zoom*(cam.aspect<1?1.6:1)-cam.position.z)*.15;ren.render(scene,cam)})();
+rs();build();
+</script></body></html>
